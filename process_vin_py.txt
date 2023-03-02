@@ -1,0 +1,88 @@
+def process_vin(chassis,pp,freq):
+  
+  new_data = pd.DataFrame()
+  min_data = pd.DataFrame()
+  max_data = pd.DataFrame()
+  median_data = pd.DataFrame()
+  
+  data = pp[(pp['vin'] == chassis)]
+  data = data[(data['Wheel Base Vehicle Speed']<200) & (data['Engine speed']>0) & (data['Engine speed']<5000) & (data['IC_Total_Distance']!=999999)]
+       
+  data['timestamp'] = pd.to_datetime(data['timestamp'])
+  data.index= data['timestamp']
+  
+  new_data[['Engine coolant temperature_min','Engine oil temperature_min','DPF Thermal Management Active_min','SCR Thermal Management Active_min','Distance to Service_min','Total fuel used']] = data[['Engine coolant temperature','Engine oil temperature','DPF Thermal Management Active','SCR Thermal Management Active','Distance to Service','Total fuel used']].resample(freq).min().dropna()
+  
+  new_data[['Engine coolant temperature_avg','Engine oil temperature_avg','Actual engine - percent torque_avg' ,'Diesel Particulate Filter Status_avg','Engine speed_avg','Engine torque mode_avg','Wheel Base Vehicle Speed_avg','Engine Performance Bias Level','Engine percent load at current speed_avg']] =  data[['Engine coolant temperature','Engine oil temperature','Actual engine - percent torque' ,'Diesel Particulate Filter Status','Engine speed','Engine torque mode','Wheel Base Vehicle Speed','Engine Performance Bias Level','Engine percent load at current speed']].resample(freq).median().dropna()
+  
+  new_data[['IC_Total_Distance','SCR Thermal Management Active_max','Engine coolant temperature_max','Engine oil temperature_max','Air filter clogging_max','Cab tilt_max','Engine Oil Pressure Low Lamp Command_max','Engine Coolant Level Low Lamp Command_max','Engine Coolant Temperature High Lamp Command_max','AmberWarningLampStatus_max','Engine Air Filter Restriction Lamp Command_max']] = data[['IC_Total_Distance', 'SCR Thermal Management Active','Engine coolant temperature','Engine oil temperature', 'Air filter clogging','Cab tilt','Engine Oil Pressure Low Lamp Command','Engine Coolant Level Low Lamp Command','Engine Coolant Temperature High Lamp Command', 'AmberWarningLampStatus', 'Engine Air Filter Restriction Lamp Command']].resample(freq).max().dropna()
+  
+  #bucketing pedal, speed and trq
+  data['pedal_cat'] = pd.cut(data['Accelerator pedal position'],
+                             bins=[-1,0,10,20,30,40,50,60,70,80,90,1000],
+                             labels=['pedal_disengaged',
+                                     'pedal_1-10',
+                                     'pedal_11-20',
+                                     'pedal_21-30',
+                                     'pedal_31-40',
+                                     'pedal_41-50',
+                                     'pedal_51-60',
+                                     'pedal_61-70',
+                                     'pedal_71-80',
+                                     'pedal_81-90',
+                                     'pedal_91-100'])
+  data['speed_cat'] = pd.cut(data['Wheel Base Vehicle Speed'],
+                             bins=[-1,0,10,20,30,40,50,60,70,80,90,100,1000],
+                             labels=['speed_zero',
+                                     'speed_1-10',
+                                     'speed_11-20',
+                                     'speed_21-30',
+                                     'speed_31-40',
+                                     'speed_41-50',
+                                     'speed_51-60',
+                                     'speed_61-70',
+                                     'speed_71-80',
+                                     'speed_81-90',
+                                     'speed_91-100',
+                                     'speed_>100'])
+  data['trq_cat'] = pd.cut(data['Actual engine - percent torque'],
+                           bins=[0,10,20,30,40,50,60,70,80,90,100],
+                           labels=['trq_1-10',
+                                   'trq_11-20',
+                                   'trq_21-30',
+                                   'trq_31-40',
+                                   'trq_41-50',
+                                   'trq_51-60',
+                                   'trq_61-70',
+                                   'trq_71-80',
+                                   'trq_81-90',
+                                   'trq_91-100'])
+  data['rpm_cat'] = pd.cut(data['Engine speed'],
+                           bins=[0,700,900,1100,1300,1500,1700,1900,2100,10000],
+                           labels=['rpm_Idle',
+                                   'rpm_700-900',
+                                   'rpm_900-1100',
+                                   'rpm_1100-1300',
+                                   'rpm_1300-1500',
+                                   'rpm_1500-1700',
+                                   'rpm_1700-1900',
+                                   'rpm_1900-2100',
+                                   'rpm>2100'])
+  
+  
+  new_data[['pedal_cat','speed_cat','trq_cat','rpm_cat']] = data[['pedal_cat','speed_cat','trq_cat','rpm_cat']].resample(freq).first().dropna()
+        
+  new_data['vin'] = chassis
+  new_data = new_data.reset_index()   
+  
+  sample_ind = new_data[(((new_data['timestamp'].shift(-1)-new_data['timestamp'])/np.timedelta64(1,"m"))>15)].index+1
+  df_sample_trip = new_data.iloc[sample_ind]
+  df_sample_trip['tripID'] = chassis+"_"  +df_sample_trip['timestamp'].dt.day.astype(str)  +df_sample_trip['timestamp'].dt.month_name().astype(str)  +df_sample_trip['timestamp'].dt.year.astype(str)+"_"+df_sample_trip['timestamp'].dt.hour.astype(str)  +df_sample_trip['timestamp'].dt.minute.astype(str)
+  
+  new_data = new_data.drop(sample_ind)
+  new_data = new_data.append(df_sample_trip).sort_values(by='timestamp')
+  new_data.loc[0,'tripID'] = chassis+"_"+str(new_data['timestamp'][0].day)+str(new_data['timestamp'][0].month_name())+str(new_data['timestamp'][0].year)+"_"+str(new_data['timestamp'][0].hour)+str(new_data['timestamp'][0].minute)
+  new_data['tripID'] = new_data['tripID'].fillna(method='ffill')
+  
+  print("trips: "+str(new_data['tripID'].nunique()))
+  new_data.to_csv(output_dir+str(chassis)+"_canprocessed.csv",index=False)
