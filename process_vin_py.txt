@@ -86,3 +86,65 @@ def process_vin(chassis,pp,freq):
   
   print("trips: "+str(new_data['tripID'].nunique()))
   new_data.to_csv(output_dir+str(chassis)+"_canprocessed.csv",index=False)
+  
+  
+  ###############################################################################################
+  
+  count = 0
+for chassis in unprocessed_vins:
+  try:
+    count+=1
+    print(str(count)+"/"+str(len(list(set(pp['vin'].unique()))))+" "+chassis)
+    freq = '1min' # can use 'H' for hourly aggregation
+    process_vin(chassis,pp,freq) 
+  except Exception as e:
+      print(e)
+      print("No Data")
+      pass
+      
+  ###############################################################################################
+  files = glob.glob(output_dir+"*.csv")
+
+combined_df = pd.DataFrame()
+for f in files:
+    try:
+        final_df = pd.DataFrame()
+        print(f)
+        df = pd.read_csv(f)
+#        print(df['Chassis_no'].unique())
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values(by='timestamp')
+        #df['fuelRefill'] = 0
+        df['Fuel_consumption'] = df['Total fuel used'].shift(-1)-df['Total fuel used']
+        df.loc[df[df['Total fuel used'].shift(-1)-df['Total fuel used']>15].index,'fuelRefill']=1
+        #df.loc[df[df['Fuel_consumption']>5].index,'Fuel_consumption']=0
+        mean_df = np.round(df.groupby('tripID')['vin','Engine coolant temperature_avg','Engine oil temperature_avg','Actual engine - percent torque_avg' , 'Diesel Particulate Filter Status_avg','Engine percent load at current speed_avg','Engine speed_avg','Engine torque mode_avg','Wheel Base Vehicle Speed_avg','Engine Performance Bias Level'].median(),2)
+        min_df = np.round(df.groupby('tripID')['Engine coolant temperature_min','Engine oil temperature_min','Total fuel used','DPF Thermal Management Active_min','SCR Thermal Management Active_min','Distance to Service_min'].min(),2)
+        max_df = np.round(df.groupby('tripID')['IC_Total_Distance','Engine coolant temperature_max','Engine oil temperature_max','Air filter clogging_max','Cab tilt_max','Engine Oil Pressure Low Lamp Command_max','Engine Coolant Level Low Lamp Command_max','Engine Coolant Temperature High Lamp Command_max','SCR Thermal Management Active_max','AmberWarningLampStatus_max','Engine Air Filter Restriction Lamp Command_max','Fuel_consumption','fuelRefill'].max(),2)
+        agg_df = df.groupby('tripID').agg(Total_dist = ('IC_Total_Distance' ,lambda x : x.max()-x.min()),
+                     Total_fuel = ('Total fuel used', lambda x: x.max()-x.min()),
+                     #FuelRefill = ('fuelRefill','max'),
+                     Trip_time_minute = ('timestamp',lambda x: (x.astype(np.datetime64).max()-x.astype(np.datetime64).min())/np.timedelta64(1,"m")),
+                     Trip_start = ('timestamp','first'),
+                                                    vin = ('vin','first'))
+        pedal_df = pd.pivot_table(df.groupby('tripID').apply(lambda x: x['pedal_cat'].value_counts()/len(x)*100).reset_index(),index='tripID',columns='level_1')
+        speed_df = pd.pivot_table(df.groupby('tripID').apply(lambda x: x['speed_cat'].value_counts()/len(x)*100).reset_index(),index='tripID',columns='level_1')
+        trq_df = pd.pivot_table(df.groupby('tripID').apply(lambda x: x['trq_cat'].value_counts()/len(x)*100).reset_index(),index='tripID',columns='level_1')
+        rpm_df = pd.pivot_table(df.groupby('tripID').apply(lambda x: x['rpm_cat'].value_counts()/len(x)*100).reset_index(),index='tripID',columns='level_1')
+    
+        pedal_df.columns = pedal_df.columns.droplevel(0)
+        speed_df.columns = speed_df.columns.droplevel(0)
+        rpm_df.columns = rpm_df.columns.droplevel(0)
+        trq_df.columns = trq_df.columns.droplevel(0)
+
+        final_df = agg_df.merge(mean_df,left_index=True,right_index=True).merge(max_df,left_index=True,right_index=True).merge(min_df,left_index=True,right_index=True).merge(
+            pedal_df,left_index=True,right_index=True).merge(speed_df,left_index=True,right_index=True).merge(trq_df,left_index=True,right_index=True).merge(
+        rpm_df,left_index=True,right_index=True)
+        
+        combined_df= combined_df.append(final_df)
+    except Exception as e:
+      print(e)
+      print("Skipping")
+      pass
+
+combined_df.to_csv("/dbfs/FileStore/Retro/"+"summary.csv")
