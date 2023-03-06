@@ -148,3 +148,21 @@ for f in files:
       pass
 
 combined_df.to_csv("/dbfs/FileStore/Retro/"+"summary.csv")
+
+#######################################################################
+df=pd.merge(df_bom2,df_sal2,how='outer',left_on='VEHICLE_NUMBER', right_on='VC#')
+df.columns = df.columns.droplevel(1)
+df=df[df['MATERIAL'].notna()]
+df["Down_numb"]=df.MATERIAL_QTY * df['Chassis No']
+df2=df.groupby(by=['MATERIAL', 'PART_DESCRIPTION','Sales_batch'], as_index=False).aggregate({"Chassis No":["sum"],"Down_numb":["sum"]})
+df2.columns = df2.columns.droplevel(1)
+
+import datetime
+df_warr1=pd.read_excel("D:/wty/wty1/Normal warranty - Apr'2020.XLSX")
+df_warr1['Complaint_batch']= df_warr1['Complaint Date'].dt.year.map(str)+"-"+df_warr1['Complaint Date'].dt.month.map(str)
+df_warr1['Sales_batch']= df_warr1['Date of Sale'].dt.year.map(str) +"-"+ df_warr1['Date of Sale'].dt.month.map(str)
+df_warr2=df_warr1.groupby(by=['Material', 'Material Number','Complaint_batch','Sales_batch'], as_index=False).aggregate({"OC Approved":["sum"],"Quantity":["sum"]})
+df_warr2.columns = df_warr2.columns.droplevel(1)
+
+df_final=pd.merge(df_warr2, df2, left_on=['Material','Sales_batch'], right_on=['MATERIAL','Sales_batch'], how='left')
+df_final.head()
